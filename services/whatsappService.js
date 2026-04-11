@@ -24,6 +24,7 @@ function buildInteraktPayload({ phone, name, inquiryId } = {}) {
   return {
     countryCode: getCountryCode(),
     phoneNumber: sanitizePhoneNumber(phone),
+    fullName: sanitizeValue(name), // 👈 ADD THIS
     type: 'Template',
     template: {
       name: process.env.INTERAKT_USER_TEMPLATE,
@@ -40,6 +41,7 @@ function buildTeamInteraktPayload({ name, phone, inquiryId } = {}) {
   return {
     countryCode: getCountryCode(),
     phoneNumber: sanitizePhoneNumber(process.env.INTERAKT_TEAM_PHONE),
+    fullName: sanitizeValue(name), // 👈 ADD THIS
     type: 'Template',
     template: {
       name: process.env.INTERAKT_TEAM_TEMPLATE,
@@ -117,13 +119,31 @@ async function sendWhatsAppConfirmation(formData = {}) {
 }
 
 async function sendTeamWhatsApp(formData = {}) {
-  const payload = buildTeamInteraktPayload({
-    phone: formData.phone,
-    name: formData.contactName || formData.name,
-    inquiryId: formData.inquiryId,
-  });
+  const teamPhones = process.env.INTERAKT_TEAM_PHONE.split(',');
 
-  return sendInteraktMessage(payload);
+  for (let phone of teamPhones) {
+    const cleanPhone = phone.trim();
+
+    const payload = {
+      countryCode: getCountryCode(),
+      phoneNumber: sanitizePhoneNumber(cleanPhone),
+      fullName: sanitizeValue(formData.name),
+      type: 'Template',
+      template: {
+        name: process.env.INTERAKT_TEAM_TEMPLATE,
+        languageCode: "en",
+        bodyValues: [
+          sanitizeValue(formData.name),
+          sanitizeValue(formData.phone),
+          sanitizeValue(formData.inquiryId),
+        ],
+      },
+    };
+
+    await sendInteraktMessage(payload);
+  }
+
+  return true;
 }
 
 module.exports = {
