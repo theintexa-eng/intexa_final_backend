@@ -121,6 +121,7 @@ function buildStartInquiryPayload(payload, inquiryId) {
 function buildCompleteLeadPayload(inquiry) {
   return {
     ...inquiry.toObject(),
+    inquiryId: inquiry.inquiryId,
     formType: 'inquiry',
   };
 }
@@ -289,7 +290,7 @@ async function completeInquiry(req, res) {
     }
 
     await sendUserConfirmation(leadPayload);
-    await triggerWhatsAppIntegration(leadPayload);
+    void triggerWhatsAppIntegration(leadPayload);
     await triggerZohoIntegration(leadPayload);
 
     return res.status(200).json({

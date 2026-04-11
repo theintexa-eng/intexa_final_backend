@@ -1,6 +1,8 @@
 const {
   isWhatsAppConfigured,
   sendWhatsAppConfirmation,
+  sendWhatsAppMessage,
+  sendTeamWhatsApp,
 } = require('./whatsappService');
 
 async function triggerWhatsAppIntegration(formData = {}) {
@@ -10,11 +12,19 @@ async function triggerWhatsAppIntegration(formData = {}) {
   }
 
   try {
-    await sendWhatsAppConfirmation({
-      ...formData,
-      formType: formData.formType || 'inquiry',
+    const userResult = await sendWhatsAppMessage({
+      phone: formData.phone,
+      name: formData.name,
+      inquiryId: formData.inquiryId,
     });
-    return 'sent';
+
+    const teamResult = await sendTeamWhatsApp({
+      phone: formData.phone,
+      name: formData.contactName || formData.name,
+      inquiryId: formData.inquiryId,
+    });
+
+    return userResult || teamResult ? 'sent' : 'skipped';
   } catch (error) {
     console.error('WhatsApp failed:', error.message);
     return 'skipped';
@@ -22,18 +32,25 @@ async function triggerWhatsAppIntegration(formData = {}) {
 }
 
 async function sendWhatsAppPartner(formData = {}) {
-  if (!process.env.WHATSAPP_KEY && !isWhatsAppConfigured()) {
+  if (!isWhatsAppConfigured()) {
     console.log('WhatsApp skipped - API key missing');
     return 'skipped';
   }
 
   try {
-    await sendWhatsAppConfirmation({
-      ...formData,
-      formType: 'partner application',
+    const userResult = await sendWhatsAppMessage({
+      phone: formData.phone,
       name: formData.contactName || formData.name,
+      inquiryId: formData.inquiryId,
     });
-    return 'sent';
+
+    const teamResult = await sendTeamWhatsApp({
+      phone: formData.phone,
+      name: formData.contactName || formData.name,
+      inquiryId: formData.inquiryId,
+    });
+
+    return userResult || teamResult ? 'sent' : 'skipped';
   } catch (error) {
     console.error('WhatsApp failed:', error.message);
     return 'skipped';
@@ -42,7 +59,9 @@ async function sendWhatsAppPartner(formData = {}) {
 
 module.exports = {
   isWhatsAppConfigured,
+  sendWhatsAppMessage,
   sendWhatsAppConfirmation,
+  sendTeamWhatsApp,
   sendWhatsAppPartner,
   triggerWhatsAppIntegration,
 };

@@ -1,101 +1,135 @@
-const DEFAULT_WHATSAPP_API_URL = 'https://graph.facebook.com/v22.0';
+const axios = require('axios');
 
-function sanitizeValue(value) {
-  if (value === undefined || value === null) {
-    return '';
+const INTERAKT_API_URL = 'https://api.interakt.ai/v1/public/message/';
+const DEFAULT_COUNTRY_CODE = '+91';
+const DEFAULT_LANGUAGE_CODE = 'en';
+
+function sanitizeValue(value, fallback = "User") {
+  if (!value || String(value).trim() === "") {
+    return fallback;
   }
-
   return String(value).trim();
 }
 
-function buildConfirmationMessage(formData = {}) {
-  const name = sanitizeValue(formData.name) || 'there';
-  const formType = sanitizeValue(formData.formType) || 'lead';
-
-  return `Hi ${name}, thanks for your ${formType} submission. Our team has received your details and will contact you shortly.`;
+function sanitizePhoneNumber(phone) {
+  const numericPhone = sanitizeValue(phone).replace(/\D/g, '');
+  return numericPhone.length > 10 ? numericPhone.slice(-10) : numericPhone;
 }
 
-async function parseApiResponse(response) {
-  const rawBody = await response.text();
+function getCountryCode() {
+  return sanitizeValue(process.env.INTERAKT_COUNTRY_CODE) || DEFAULT_COUNTRY_CODE;
+}
 
-  if (!rawBody) {
+function buildInteraktPayload({ phone, name, inquiryId } = {}) {
+  return {
+    countryCode: getCountryCode(),
+    phoneNumber: sanitizePhoneNumber(phone),
+    type: 'Template',
+    template: {
+      name: process.env.INTERAKT_USER_TEMPLATE,
+      languageCode: 'en',
+      bodyValues: [
+        sanitizeValue(name),
+        sanitizeValue(inquiryId),
+      ],
+    },
+  };
+}
+
+function buildTeamInteraktPayload({ name, phone, inquiryId } = {}) {
+  return {
+    countryCode: getCountryCode(),
+    phoneNumber: sanitizePhoneNumber(process.env.INTERAKT_TEAM_PHONE),
+    type: 'Template',
+    template: {
+      name: process.env.INTERAKT_TEAM_TEMPLATE,
+      languageCode: 'en',
+      bodyValues: [
+        sanitizeValue(name),
+        sanitizeValue(phone),
+        sanitizeValue(inquiryId),
+      ],
+    },
+  };
+}
+
+function isWhatsAppConfigured() {
+  return Boolean(process.env.INTERAKT_API_KEY);
+}
+
+function buildInteraktHeaders() {
+  return {
+    Authorization: `Basic ${process.env.INTERAKT_API_KEY}`,
+    'Content-Type': 'application/json',
+  };
+}
+
+async function sendInteraktMessage(payload) {
+  const apiKey = process.env.INTERAKT_API_KEY;
+
+  if (!apiKey) {
+    return null;
+  }
+
+  if (!payload.phoneNumber) {
+    console.error('WhatsApp skipped - valid phone number missing');
+    return null;
+  }
+
+  if (!payload.template?.name) {
+    console.error('WhatsApp skipped - template name missing');
     return null;
   }
 
   try {
-    return JSON.parse(rawBody);
-  } catch {
-    return rawBody;
+    console.log('PAYLOAD:', payload);
+    console.log('SENDING TEMPLATE:', payload.template.name);
+    console.log('VALUES:', payload.template.bodyValues);
+
+    const response = await axios.post(INTERAKT_API_URL, payload, {
+      headers: buildInteraktHeaders(),
+    });
+
+    return response.data;
+  } catch (error) {
+    const message =
+      error.response?.data?.message ||
+      error.response?.data?.error ||
+      error.message ||
+      'Interakt API request failed.';
+
+    console.error('WhatsApp failed:', message);
+    return null;
   }
 }
 
-function isWhatsAppConfigured() {
-  return Boolean(process.env.WHATSAPP_API_KEY || process.env.WHATSAPP_KEY);
+async function sendWhatsAppMessage({ phone, name, inquiryId } = {}) {
+  const payload = buildInteraktPayload({ phone, name, inquiryId });
+  return sendInteraktMessage(payload);
 }
 
 async function sendWhatsAppConfirmation(formData = {}) {
-  const apiKey = process.env.WHATSAPP_API_KEY || process.env.WHATSAPP_KEY;
-  const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
-  const recipientPhone = sanitizeValue(formData.phone);
+  return sendWhatsAppMessage({
+    phone: formData.phone,
+    name: formData.contactName || formData.name,
+    inquiryId: formData.inquiryId,
+  });
+}
 
-  if (!apiKey) {
-    throw new Error('WHATSAPP_API_KEY is not defined in the environment variables.');
-  }
+async function sendTeamWhatsApp(formData = {}) {
+  const payload = buildTeamInteraktPayload({
+    phone: formData.phone,
+    name: formData.contactName || formData.name,
+    inquiryId: formData.inquiryId,
+  });
 
-  if (!phoneNumberId) {
-    throw new Error('WHATSAPP_PHONE_NUMBER_ID is not defined in the environment variables.');
-  }
-
-  if (!recipientPhone) {
-    throw new Error('phone is required to send a WhatsApp confirmation message.');
-  }
-
-  const apiBaseUrl = process.env.WHATSAPP_API_URL || DEFAULT_WHATSAPP_API_URL;
-  const requestBody = {
-    messaging_product: 'whatsapp',
-    recipient_type: 'individual',
-    to: recipientPhone,
-    type: 'text',
-    text: {
-      body: buildConfirmationMessage(formData),
-      preview_url: false,
-    },
-  };
-
-  let response;
-
-  try {
-    response = await fetch(`${apiBaseUrl}/${phoneNumberId}/messages`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(requestBody),
-    });
-  } catch (error) {
-    throw new Error(`Failed to connect to WhatsApp API: ${error.message}`);
-  }
-
-  const responseBody = await parseApiResponse(response);
-
-  if (!response.ok) {
-    const message =
-      responseBody?.error?.message ||
-      responseBody?.message ||
-      'WhatsApp API request failed.';
-    const error = new Error(message);
-
-    error.status = response.status;
-    error.details = responseBody;
-
-    throw error;
-  }
-
-  return responseBody;
+  return sendInteraktMessage(payload);
 }
 
 module.exports = {
   isWhatsAppConfigured,
+  sanitizePhoneNumber,
+  sendWhatsAppMessage,
   sendWhatsAppConfirmation,
+  sendTeamWhatsApp,
 };

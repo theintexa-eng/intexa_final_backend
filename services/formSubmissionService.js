@@ -2,6 +2,7 @@ const validateLead = require('../middleware/validateLead');
 const { sendAdminEmail, sendUserEmail } = require('./emailService');
 const {
   sendWhatsAppConfirmation,
+  sendTeamWhatsApp,
   isWhatsAppConfigured,
 } = require('./whatsappService');
 const { sendLeadToZoho, isZohoConfigured } = require('./zohoService');
@@ -28,8 +29,10 @@ async function sendOptionalWhatsApp(leadPayload) {
   }
 
   try {
-    await sendWhatsAppConfirmation(leadPayload);
-    return 'sent';
+    const userResult = await sendWhatsAppConfirmation(leadPayload);
+    const teamResult = await sendTeamWhatsApp(leadPayload);
+
+    return userResult || teamResult ? 'sent' : 'skipped';
   } catch (error) {
     console.error('WhatsApp failed:', error.message);
     return 'skipped';
@@ -94,7 +97,7 @@ async function submitLead({
 
   await sendUserEmail(leadPayload);
 
-  await sendOptionalWhatsApp(leadPayload);
+  void sendOptionalWhatsApp(leadPayload);
   await sendOptionalZohoLead(leadPayload);
 
   return res.status(201).json(buildSuccessResponse());
