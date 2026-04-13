@@ -1,5 +1,7 @@
-const DEFAULT_ZOHO_API_URL = 'https://www.zohoapis.com/crm/v2/Leads';
-const DEFAULT_ZOHO_TOKEN_URL = 'https://accounts.zoho.com/oauth/v2/token';
+const axios = require('axios');
+
+const DEFAULT_ZOHO_API_URL = 'https://www.zohoapis.in/crm/v2/Leads';
+const DEFAULT_ZOHO_TOKEN_URL = 'https://accounts.zoho.in/oauth/v2/token';
 
 function sanitizeValue(value) {
   if (value === undefined || value === null) {
@@ -10,37 +12,88 @@ function sanitizeValue(value) {
   return normalizedValue || undefined;
 }
 
-function buildZohoLeadPayload(leadData = {}) {
-  const name = sanitizeValue(leadData.name);
-  const businessName = sanitizeValue(leadData.businessName);
-  const payload = {
-    Last_Name: name || 'Unknown',
-    Company: businessName || 'Individual',
-    Email: sanitizeValue(leadData.email),
-    Phone: sanitizeValue(leadData.phone),
-    City: sanitizeValue(leadData.city),
-    Lead_Source: sanitizeValue(leadData.source) || 'Website',
-    Description: sanitizeValue(leadData.message),
-    Full_Name: name,
-  };
+function maskEmail(email) {
+  const normalizedEmail = sanitizeValue(email);
+
+  if (!normalizedEmail || !normalizedEmail.includes('@')) {
+    return normalizedEmail;
+  }
+
+  const [localPart, domain] = normalizedEmail.split('@');
+  const visibleLocalPart = localPart.slice(0, 2);
+  return `${visibleLocalPart}***@${domain}`;
+}
+
+function maskPhone(phone) {
+  const normalizedPhone = sanitizeValue(phone);
+
+  if (!normalizedPhone) {
+    return normalizedPhone;
+  }
+
+  const lastFourDigits = normalizedPhone.slice(-4);
+  return `******${lastFourDigits}`;
+}
+
+function splitName(name) {
+  const normalizedName = sanitizeValue(name) || 'User';
+  const nameParts = normalizedName.split(/\s+/).filter(Boolean);
+  const firstName = nameParts[0] || 'User';
+  const lastName = nameParts.slice(1).join(' ') || 'Lead';
 
   return {
-    data: [Object.fromEntries(Object.entries(payload).filter(([, value]) => value !== undefined))],
+    firstName,
+    lastName,
+    normalizedName,
   };
 }
 
-async function parseZohoResponse(response) {
-  const rawBody = await response.text();
+function buildDescription(data = {}) {
+  const lines = [
+    `Name: ${sanitizeValue(data.name) || 'User'}`,
+    `City: ${sanitizeValue(data.city) || 'Not provided'}`,
+    `Property Type: ${sanitizeValue(data.propertyType) || 'Not provided'}`,
+    `Budget: ${sanitizeValue(data.budget) || 'Not provided'}`,
+    `Timeline: ${sanitizeValue(data.timeline) || 'Not provided'}`,
+    `Message: ${sanitizeValue(data.message) || 'Not provided'}`,
+  ];
 
-  if (!rawBody) {
-    return null;
-  }
+  return lines.join('\n');
+}
 
-  try {
-    return JSON.parse(rawBody);
-  } catch {
-    return rawBody;
+function buildZohoLeadPayload(data = {}) {
+  const { firstName, lastName } = splitName(data.name);
+
+const leadRecord = {
+  First_Name: firstName,
+  Last_Name: lastName,
+  Email: sanitizeValue(data.email),
+  Mobile: sanitizeValue(data.phone),
+  Lead_Source: "Website", // 🔥 ADD THIS
+  Description: buildDescription(data),
+};
+
+// clean undefined
+const cleanedRecord = {};
+Object.entries(leadRecord).forEach(([key, value]) => {
+  if (value !== undefined && value !== null && value !== '') {
+    cleanedRecord[key] = value;
   }
+});
+
+  return {
+    data: [cleanedRecord],
+  };
+}
+
+function buildSafePayloadLog(payload) {
+  return {
+    data: payload.data.map((lead) => ({
+      ...lead,
+      Email: maskEmail(lead.Email),
+      Mobile: maskPhone(lead.Mobile), // ✅ FIX
+    })),
+  };
 }
 
 function isZohoConfigured() {
@@ -51,92 +104,94 @@ function isZohoConfigured() {
   );
 }
 
-async function generateZohoAccessToken() {
-  const refreshToken = process.env.ZOHO_REFRESH_TOKEN;
-  const clientId = process.env.ZOHO_CLIENT_ID;
-  const clientSecret = process.env.ZOHO_CLIENT_SECRET;
+function buildZohoErrorDetails(error) {
+  return {
+    status: error.response?.status || 500,
+    message:
+      error.response?.data?.message ||
+      error.response?.data?.error ||
+      error.response?.data?.data?.[0]?.message ||
+      error.message ||
+      'Zoho API request failed.',
+    details: error.response?.data || null,
+  };
+}
 
+async function generateAccessToken() {
   if (!isZohoConfigured()) {
     throw new Error('Zoho credentials missing');
   }
 
-  const tokenUrl = process.env.ZOHO_TOKEN_URL || DEFAULT_ZOHO_TOKEN_URL;
-  const requestBody = new URLSearchParams({
-    refresh_token: refreshToken,
-    client_id: clientId,
-    client_secret: clientSecret,
-    grant_type: 'refresh_token',
-  });
-
-  let response;
-
   try {
-    response = await fetch(tokenUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: requestBody.toString(),
-    });
+    // Exchange the refresh token for a short-lived access token before each CRM request.
+    const response = await axios.post(
+      process.env.ZOHO_TOKEN_URL || DEFAULT_ZOHO_TOKEN_URL,
+      null,
+      {
+        params: {
+          refresh_token: process.env.ZOHO_REFRESH_TOKEN,
+          client_id: process.env.ZOHO_CLIENT_ID,
+          client_secret: process.env.ZOHO_CLIENT_SECRET,
+          grant_type: 'refresh_token',
+        },
+      }
+    );
+
+    const accessToken = response.data?.access_token;
+
+    if (!accessToken) {
+      throw new Error('Zoho token response did not include an access token.');
+    }
+
+    console.log('Zoho token generated successfully');
+    return accessToken;
   } catch (error) {
-    throw new Error(`Failed to connect to Zoho token API: ${error.message}`);
-  }
-
-  const responseBody = await parseZohoResponse(response);
-
-  if (!response.ok || !responseBody?.access_token) {
-    const message = responseBody?.error || responseBody?.message || 'Failed to generate Zoho access token.';
-    const error = new Error(message);
-
-    error.status = response.status || 500;
-    error.details = responseBody;
-
+    const errorDetails = buildZohoErrorDetails(error);
+    console.error('Zoho token generation failed:', errorDetails);
     throw error;
   }
-
-  return responseBody.access_token;
 }
 
-async function sendLeadToZoho(leadData = {}) {
-  const accessToken = await generateZohoAccessToken();
-
-  const apiUrl = process.env.ZOHO_API_URL || DEFAULT_ZOHO_API_URL;
-  const payload = buildZohoLeadPayload(leadData);
-
-  let response;
+async function sendToZoho(data = {}) {
+  if (!isZohoConfigured()) {
+    console.log('Zoho skipped - credentials missing');
+    return null;
+  }
 
   try {
-    response = await fetch(apiUrl, {
-      method: 'POST',
-      headers: {
-        Authorization: `Zoho-oauthtoken ${accessToken}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(payload),
-    });
+    // Build the CRM lead payload with the required inquiry details.
+    const payload = buildZohoLeadPayload(data);
+    const accessToken = await generateAccessToken();
+
+    console.log('Zoho request payload:', buildSafePayloadLog(payload));
+
+    // Send the lead to Zoho CRM using the generated OAuth access token.
+    const response = await axios.post(
+  process.env.ZOHO_API_URL || DEFAULT_ZOHO_API_URL,
+  payload,
+  {
+    headers: {
+      Authorization: `Zoho-oauthtoken ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    validateStatus: () => true, // 🔥 ADD THIS
+  }
+);
+
+console.log("Zoho RAW RESPONSE:", response.data);
   } catch (error) {
-    throw new Error(`Failed to connect to Zoho API: ${error.message}`);
+    const errorDetails = buildZohoErrorDetails(error);
+    console.error('Zoho error response:', errorDetails);
+    return null;
   }
+}
 
-  const responseBody = await parseZohoResponse(response);
-
-  if (!response.ok) {
-    const message =
-      responseBody?.message ||
-      responseBody?.data?.[0]?.message ||
-      'Zoho API request failed.';
-    const error = new Error(message);
-
-    error.status = response.status;
-    error.details = responseBody;
-
-    throw error;
-  }
-
-  return responseBody;
+async function sendLeadToZoho(data = {}) {
+  return sendToZoho(data);
 }
 
 module.exports = {
   isZohoConfigured,
   sendLeadToZoho,
+  sendToZoho,
 };

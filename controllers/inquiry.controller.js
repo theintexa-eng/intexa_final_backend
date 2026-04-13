@@ -1,7 +1,7 @@
 const Inquiry = require('../models/inquiry.model');
 const { sendAdminEmail, sendUserConfirmation } = require('../services/email.service');
 const { triggerWhatsAppIntegration } = require('../services/whatsapp.service');
-const { triggerZohoIntegration } = require('../services/zoho.service');
+const { sendToZoho } = require('../services/zohoService');
 
 function sanitizeOptionalField(value) {
   if (value === undefined || value === null) {
@@ -290,8 +290,11 @@ async function completeInquiry(req, res) {
     }
 
     await sendUserConfirmation(leadPayload);
-    void triggerWhatsAppIntegration(leadPayload);
-    await triggerZohoIntegration(leadPayload);
+
+    // Run WhatsApp first, then send the same lead to Zoho without delaying the API response.
+    void triggerWhatsAppIntegration(leadPayload).finally(() => {
+      void sendToZoho(leadPayload);
+    });
 
     return res.status(200).json({
       success: true,

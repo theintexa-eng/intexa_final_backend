@@ -1,4 +1,4 @@
-const { isZohoConfigured, sendLeadToZoho } = require('./zohoService');
+const { isZohoConfigured, sendLeadToZoho, sendToZoho } = require('./zohoService');
 
 async function triggerZohoIntegration(formData = {}) {
   if (!isZohoConfigured()) {
@@ -7,7 +7,7 @@ async function triggerZohoIntegration(formData = {}) {
   }
 
   try {
-    await sendLeadToZoho(formData);
+    await sendToZoho(formData);
     return 'sent';
   } catch (error) {
     console.error('Zoho failed:', error.message);
@@ -39,6 +39,7 @@ async function sendZohoPartner(formData = {}) {
 module.exports = {
   isZohoConfigured,
   sendLeadToZoho,
+  sendToZoho,
   sendZohoPartner,
   triggerZohoIntegration,
 };
