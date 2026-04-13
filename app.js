@@ -6,14 +6,20 @@ const errorHandler = require('./middleware/errorHandler');
 
 const app = express();
 
-const allowedOrigins = [
+const allowedOrigins = new Set([
 	'https://intexa.netlify.app',
 	'http://localhost:5173'
-];
+]);
+
+function normalizeOrigin(origin) {
+	return typeof origin === 'string' ? origin.replace(/\/$/, '') : origin;
+}
 
 const corsOptions = {
 	origin(origin, callback) {
-		if (!origin || allowedOrigins.includes(origin)) {
+		const normalizedOrigin = normalizeOrigin(origin);
+
+		if (!normalizedOrigin || allowedOrigins.has(normalizedOrigin)) {
 			return callback(null, true);
 		}
 
