@@ -7,8 +7,8 @@ const errorHandler = require('./middleware/errorHandler');
 const app = express();
 
 const allowedOrigins = new Set([
-	'https://intexa.netlify.app',
-	'http://localhost:5173'
+	'https://www.intexa.in',
+	'https://intexa.in'
 ]);
 
 function normalizeOrigin(origin) {
